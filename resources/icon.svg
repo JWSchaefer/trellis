@@ -1,0 +1,60 @@
+<svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+
+  <defs>
+    <!-- Line style: darker outer stroke -->
+    <style>
+      .outer {
+        stroke: #2F4A3A;
+        stroke-width: 8;
+        stroke-linecap: round;
+        fill: none;
+      }
+
+      /* Inner highlight stroke */
+      .inner {
+        stroke: #7FB28A;
+        stroke-width: 4;
+        stroke-linecap: round;
+        fill: none;
+      }
+
+      .node-outer {
+        fill: #2F4A3A;
+      }
+
+      .node-inner {
+        fill: #9ED3A7;
+      }
+    </style>
+  </defs>
+
+  <!-- Diagonal trellis lattice -->
+
+  <!-- Outer strokes -->
+  <g class="outer">
+    <line x1="64" y1="48" x2="192" y2="208"/>
+    <line x1="128" y1="48" x2="256" y2="208"/>
+    <line x1="0" y1="48" x2="128" y2="208"/>
+
+    <line x1="64" y1="208" x2="192" y2="48"/>
+    <line x1="128" y1="208" x2="256" y2="48"/>
+    <line x1="0" y1="208" x2="128" y2="48"/>
+  </g>
+
+  <!-- Inner highlight strokes -->
+  <g class="inner">
+    <line x1="64" y1="48" x2="192" y2="208"/>
+    <line x1="128" y1="48" x2="256" y2="208"/>
+    <line x1="0" y1="48" x2="128" y2="208"/>
+
+    <line x1="64" y1="208" x2="192" y2="48"/>
+    <line x1="128" y1="208" x2="256" y2="48"/>
+    <line x1="0" y1="208" x2="128" y2="48"/>
+  </g>
+
+  <!-- Central node emphasis -->
+  <circle cx="128" cy="128" r="16" class="node-outer"/>
+  <circle cx="128" cy="128" r="10" class="node-inner"/>
+
+</svg>
+
