@@ -1,5 +1,3 @@
-"""Example: JAX pytree operations on params."""
-
 import jax
 
 from trellis import Model, Spec
@@ -25,26 +23,26 @@ print(f'Leaves: {leaves}')
 
 # Tree structure
 structure = jax.tree.structure(params)
-print(f'Structure: {structure}')
+print(f'Structure: {structure}\n')
 
 # Tree map - apply function to all leaves
 doubled = jax.tree.map(lambda x: x * 2, params)
-print(f'\nDoubled params:')
+print('Doubled params:')
 print(f'  alpha.value: {doubled.alpha.value}')
-print(f'  beta.value: {doubled.beta.value}')
+print(f'  beta.value: {doubled.beta.value}\n')
 
 # Flatten/unflatten for optimizers
 flat, treedef = jax.tree.flatten(params)
-print(f'\nFlattened: {flat}')
+print(f'Flattened: {flat}')
 print(f'Treedef: {treedef}')
 
 # Reconstruct from flat
 reconstructed = jax.tree.unflatten(treedef, flat)
-print(f'\nReconstructed: {reconstructed}')
+print(f'\nReconstructed: {reconstructed}\n')
 
 # Model's flatten_params for 1D array (optimizer-friendly)
 flat_array, structure = model.flatten_params()
-print(f'\nModel.flatten_params:')
+print('Model.flatten_params:')
 print(f'  flat_array: {flat_array}')
 print(f'  structure: {structure}')
 
