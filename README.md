@@ -4,7 +4,7 @@
 <img src="resources/icon.png" height="160"/><a/>
 </p>
 
-A framework for declarative model specification with jax
+A framework for declarative prbablistic model specification with jax
 
 ## 🚀 Quickstart
 
