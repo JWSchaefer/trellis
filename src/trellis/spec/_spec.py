@@ -8,7 +8,6 @@ from beartype.typing import (
     ClassVar,
     Generic,
     Optional,
-    Type,
     TypeVar,
     get_args,
     get_origin,
@@ -41,6 +40,21 @@ def _is_parameter_bound(tv: TypeVar) -> bool:
     return isinstance(bound_origin, type) and issubclass(
         bound_origin, Parameter
     )
+
+
+def _is_list_of_specs(ann) -> tuple[bool, type | None]:
+    """Check if annotation is list[SomeSpec]. Returns (is_list, inner_spec_type)."""
+    origin = get_origin(ann)
+    if origin is not list:
+        return False, None
+    args = get_args(ann)
+    if not args:
+        return False, None
+    inner_type = args[0]
+    inner_origin = get_origin(inner_type) or inner_type
+    if isinstance(inner_origin, type) and issubclass(inner_origin, Spec):
+        return True, inner_origin
+    return False, None
 
 
 class SpecMeta(ABCMeta):
@@ -93,6 +107,12 @@ class SpecMeta(ABCMeta):
                 nested_params = mcs._generate_params_class(origin)
                 fields.append((name, nested_params))
 
+            elif origin is list:
+                is_list, inner_spec = _is_list_of_specs(ann)
+                if is_list and inner_spec is not None:
+                    mcs._generate_params_class(inner_spec)  # Ensure nested class exists
+                    fields.append((name, tuple))
+
         class_name = f'{spec_cls.__name__}Params'
         ParamsClass = make_dataclass(class_name, fields, frozen=True)
 
@@ -128,6 +148,13 @@ class SpecMeta(ABCMeta):
                 nested_state = mcs._generate_state_class(origin)
                 if dataclass_fields(nested_state):
                     fields.append((name, nested_state))
+
+            elif origin is list:
+                is_list, inner_spec = _is_list_of_specs(ann)
+                if is_list and inner_spec is not None:
+                    nested_state = mcs._generate_state_class(inner_spec)
+                    if dataclass_fields(nested_state):
+                        fields.append((name, tuple))
 
         class_name = f'{spec_cls.__name__}State'
         StateClass = make_dataclass(class_name, fields, frozen=True)
@@ -165,10 +192,13 @@ class SpecMeta(ABCMeta):
 
             elif isinstance(origin, type) and issubclass(origin, Spec):
                 nested_transforms = mcs._generate_transforms_class(origin)
-                if dataclass_fields(nested_transforms):
-                    fields.append((name, nested_transforms))
-                else:
-                    fields.append((name, nested_transforms))
+                fields.append((name, nested_transforms))
+
+            elif origin is list:
+                is_list, inner_spec = _is_list_of_specs(ann)
+                if is_list and inner_spec is not None:
+                    mcs._generate_transforms_class(inner_spec)  # Ensure nested class exists
+                    fields.append((name, tuple))
 
         class_name = f'{spec_cls.__name__}Transforms'
         TransformsClass = make_dataclass(class_name, fields, frozen=True)
@@ -247,7 +277,11 @@ class Spec(ABC, Generic[P, S, Tr], metaclass=SpecMeta):
             origin = get_origin(ann) or ann
 
             if name in kwargs:
-                setattr(self, name, kwargs[name])
+                value = kwargs[name]
+                # Convert lists to tuples for immutability
+                if origin is list and isinstance(value, list):
+                    value = tuple(value)
+                setattr(self, name, value)
             elif isinstance(origin, type) and issubclass(origin, State):
                 setattr(self, name, None)
             else:
@@ -282,6 +316,12 @@ class Spec(ABC, Generic[P, S, Tr], metaclass=SpecMeta):
                 nested_spec = getattr(self, name)
                 params[name] = nested_spec.init_params(rng)
 
+            elif origin is list:
+                is_list, _ = _is_list_of_specs(ann)
+                if is_list:
+                    nested_specs = getattr(self, name)
+                    params[name] = tuple(s.init_params(rng) for s in nested_specs)
+
         return self.__class__.Params(**params)
 
     def init_state(self) -> S:
@@ -290,17 +330,15 @@ class Spec(ABC, Generic[P, S, Tr], metaclass=SpecMeta):
         Returns:
             Typed State dataclass with named attribute access.
         """
-        state_dict = self._collect_state_dict()
-        return self._dict_to_state(state_dict)
-
-    def _collect_state_dict(self) -> dict:
-        """Collect state values into a dict."""
+        state_cls = getattr(self.__class__, 'State')
         hints = get_type_hints(self.__class__)
         state = {}
 
-        for name, ann in hints.items():
-            # Skip class attributes
-            if name in SpecMeta.ATTRS:
+        for field in dataclass_fields(state_cls):
+            name = field.name
+            ann = hints.get(name)
+            if ann is None:
+                state[name] = None
                 continue
 
             origin = get_origin(ann) or ann
@@ -310,28 +348,15 @@ class Spec(ABC, Generic[P, S, Tr], metaclass=SpecMeta):
 
             elif isinstance(origin, type) and issubclass(origin, Spec):
                 nested_spec = getattr(self, name)
-                nested_state = nested_spec._collect_state_dict()
-                if nested_state:
-                    state[name] = nested_state
+                state[name] = nested_spec.init_state()
 
-        return state
+            elif origin is list:
+                is_list, _ = _is_list_of_specs(ann)
+                if is_list:
+                    nested_specs = getattr(self, name)
+                    state[name] = tuple(s.init_state() for s in nested_specs)
 
-    def _dict_to_state(self, state_dict: dict) -> S:
-        """Convert nested dict to typed State dataclass."""
-        hints = get_type_hints(self.__class__)
-        converted = {}
-
-        for name, value in state_dict.items():
-            ann = hints.get(name)
-            origin = get_origin(ann) or ann
-
-            if isinstance(origin, type) and issubclass(origin, Spec):
-                nested_spec = getattr(self, name)
-                converted[name] = nested_spec._dict_to_state(value)
-            else:
-                converted[name] = value
-
-        return self.__class__.State(**converted)
+        return state_cls(**state)
 
     def get_transforms(self) -> Tr:
         """Get transforms with named attribute access.
@@ -378,56 +403,15 @@ class Spec(ABC, Generic[P, S, Tr], metaclass=SpecMeta):
                 nested_spec = getattr(self, name)
                 values[name] = nested_spec._build_transforms()
 
+            elif origin is list:
+                is_list, _ = _is_list_of_specs(ann)
+                if is_list:
+                    nested_specs = getattr(self, name)
+                    values[name] = tuple(s._build_transforms() for s in nested_specs)
+                else:
+                    values[name] = Identity()
+
             else:
                 values[name] = Identity()
 
         return transforms_cls(**values)
-
-    @classmethod
-    def to_spec(cls: Type['Spec']) -> dict:
-        """Extract type specification from class annotations.
-
-        Returns:
-            Dict mapping field names to their type markers (Parameter/State/nested Spec).
-        """
-        return {
-            name: cls._from_annotation(ann)
-            for name, ann in get_type_hints(cls).items()
-        }
-
-    @classmethod
-    def _from_annotation(cls, ann):
-        origin = get_origin(ann) or ann
-        args = get_args(ann)
-
-        if isinstance(origin, type) and issubclass(origin, (Parameter, State)):
-            return origin
-
-        if isinstance(origin, type) and issubclass(origin, Spec):
-            return origin.to_structure_from_args(args)
-
-        raise TypeError(f'Unsupported annotation {ann}')
-
-    @classmethod
-    def to_structure_from_args(cls, args):
-        type_vars = getattr(cls, '__parameters__', ())
-        tv_map: dict[TypeVar, Type] = dict(zip(type_vars, args))
-
-        def substitute(ann):
-            if isinstance(ann, TypeVar):
-                return tv_map[ann]
-
-            origin = get_origin(ann)
-            if origin is None:
-                return ann
-
-            return origin[tuple(substitute(a) for a in get_args(ann))]
-
-        resolved_hints = {
-            name: substitute(ann) for name, ann in get_type_hints(cls).items()
-        }
-
-        return {
-            name: cls._from_annotation(ann)
-            for name, ann in resolved_hints.items()
-        }

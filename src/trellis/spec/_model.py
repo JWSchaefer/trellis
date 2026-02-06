@@ -139,6 +139,12 @@ class Model(Generic[P, S, Tr]):
                     result[name] = transform.inverse(value)
                 else:
                     result[name] = transform.forward(value)
+            elif isinstance(value, tuple) and isinstance(transform, tuple):
+                # Handle list[Spec] - parallel iteration over tuples
+                result[name] = tuple(
+                    self._apply_transforms(v, t, inverse)
+                    for v, t in zip(value, transform)
+                )
             else:
                 result[name] = self._apply_transforms(
                     value, transform, inverse
@@ -188,6 +194,18 @@ class Model(Generic[P, S, Tr]):
             if nested_params is None:
                 continue
 
+            # Handle list[Spec] - both spec and params are tuples
+            if isinstance(nested_spec, tuple) and isinstance(nested_params, tuple):
+                for spec_item, params_item in zip(nested_spec, nested_params):
+                    if isinstance(spec_item, Prior):
+                        value = jnp.asarray(params_item.value)
+                        state = spec_item.init_state()
+                        total = total + spec_item.log_prob(value, params_item, state)
+                        total = total + self._eval_priors(spec_item, params_item)
+                    elif isinstance(spec_item, Spec):
+                        total = total + self._eval_priors(spec_item, params_item)
+                continue
+
             if isinstance(nested_spec, Prior):
                 # This is a Prior - evaluate its log_prob
                 value = jnp.asarray(nested_params.value)
@@ -225,6 +243,10 @@ class Model(Generic[P, S, Tr]):
 
             if isinstance(transform, Transform):
                 total = total + transform.log_det_jacobian(value)
+            elif isinstance(value, tuple) and isinstance(transform, tuple):
+                # Handle list[Spec]
+                for v, t in zip(value, transform):
+                    total = total + self._log_det_jacobian(v, t)
             else:
                 total = total + self._log_det_jacobian(value, transform)
 

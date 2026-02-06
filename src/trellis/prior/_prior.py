@@ -108,9 +108,15 @@ class Prior(Spec, ABC, Generic[T]):
                 else:
                     values[name] = transform_cls
             else:
-                # For other fields, check if they're nested Specs
+                # For other fields, check if they're nested Specs or list[Spec]
                 nested = getattr(self, name, None)
-                if isinstance(nested, Spec):
+                if isinstance(nested, tuple):
+                    # list[Spec] stored as tuple
+                    values[name] = tuple(
+                        item._build_transforms() if isinstance(item, Spec) else Identity()
+                        for item in nested
+                    )
+                elif isinstance(nested, Spec):
                     values[name] = nested._build_transforms()
                 else:
                     values[name] = Identity()
