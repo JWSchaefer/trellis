@@ -1,10 +1,15 @@
 # trellis
 
 <p align="center">
-<img src="resources/icon.png" height="160"/><a/>
+<img src="resources/icon.svg" height="160"/><a/>
 </p>
 
-A framework for declarative prbablistic model specification with jax
+A framework for declarative probabilistic model specification with `jax`.
+
+## 📑 Design
+
+`trellis` aims to provide a natural api for declarative model specification.
+By separating the concerns of model definition, state information, and parameter values, `trellis` enables transparent and flexible model training / conditioning.
 
 ## 🚀 Quickstart
 

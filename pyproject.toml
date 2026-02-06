@@ -16,10 +16,7 @@ build-backend = "uv_build"
 
 
 [tool.ruff.lint]
-ignore = [
-  "F722", # Forward annotation syntax (jaxtyping shape strings)
-  "F821", # Undefined name (e.g. "D" in jaxtyping)
-]
+ignore = ["F722", "F821"]
 
 [tool.trellis]
 runtime_typechecking = true
@@ -31,6 +28,4 @@ reportInvalidTypeForm = false       # Forward refs to metaclass-generated types
 reportGeneralTypeIssues = "warning" # Downgrade to warning instead of error
 
 [dependency-groups]
-dev = [
-    "pytest>=9.0.2",
-]
+dev = ["pytest>=9.0.2"]
