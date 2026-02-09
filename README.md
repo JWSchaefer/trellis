@@ -4,7 +4,7 @@
 <img src="resources/icon.svg" height="160"/><a/>
 </p>
 
-A framework for declarative probabilistic model specification with `jax`.
+A framework for probabilistic model specification with `jax`.
 
 ## 📑 Design
 
@@ -22,6 +22,6 @@ git clone https://github.com/JWSchaefer/trellis.git
 2. Play
 
 ```bash
-uv run -m examples fixed_prior
+uv run examples/fixed_prior.py
 
 ```

@@ -46,8 +46,10 @@ class NoPrior(Prior[T]):
         state: 'NoPrior.State',
         shape: Optional[Tuple[int, ...]] = None,
     ) -> Array:
-        """Returns the current parameter value unchanged.
+        """Returns the current parameter value broadcast to the requested shape.
 
-        NoPrior has no distribution, so sampling has no effect.
+        NoPrior has no distribution, so sampling just tiles the value.
         """
-        return jnp.asarray(params.value)
+        sample_shape = self._sample_shape(params, shape)
+        value = jnp.asarray(params.value)
+        return jnp.broadcast_to(value, sample_shape)

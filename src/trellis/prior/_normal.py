@@ -54,8 +54,7 @@ class Normal(Prior[T]):
         shape: Optional[Tuple[int, ...]] = None,
     ) -> Array:
         """Sample from prior."""
-        sample_shape = shape if shape is not None else ()
-        z = jr.normal(rng_key, shape=sample_shape)
+        z = jr.normal(rng_key, shape=self._sample_shape(params, shape))
         return self.loc + self.scale * z
 
 
@@ -107,9 +106,5 @@ class NormalLearnable(Prior[T], Generic[T, LocPrior, ScalePrior]):
         shape: Optional[Tuple[int, ...]] = None,
     ) -> Array:
         """Sample from prior."""
-        loc_val = params.loc.value
-        scale_val = params.scale.value
-
-        sample_shape = shape if shape is not None else ()
-        z = jr.normal(rng_key, shape=sample_shape)
-        return loc_val + scale_val * z
+        z = jr.normal(rng_key, shape=self._sample_shape(params, shape))
+        return params.loc.value + params.scale.value * z

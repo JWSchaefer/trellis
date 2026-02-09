@@ -27,5 +27,12 @@ runtime_typechecking = true
 reportInvalidTypeForm = false       # Forward refs to metaclass-generated types
 reportGeneralTypeIssues = "warning" # Downgrade to warning instead of error
 
+[tool.pytest.ini_options]
+addopts = ["-s", "-ra", "-rP"]
+
 [dependency-groups]
-dev = ["pytest>=9.0.2"]
+dev = [
+    "matplotlib>=3.10.8",
+    "pytest>=9.0.2",
+    "seaborn>=0.13.2",
+]

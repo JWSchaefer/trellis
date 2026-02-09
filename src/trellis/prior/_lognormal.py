@@ -26,8 +26,8 @@ class LogNormal(Prior[T]):
     """
 
     value: Parameter[T]
-    mu: float
-    sigma: float
+    loc: float
+    scale: float
     transform: ClassVar[Type[Transform]] = Log
 
     @typecheck
@@ -41,9 +41,9 @@ class LogNormal(Prior[T]):
         log_x = jnp.log(value)
         element_log_prob = (
             -log_x
-            - jnp.log(self.sigma)
+            - jnp.log(self.scale)
             - 0.5 * jnp.log(2 * jnp.pi)
-            - 0.5 * ((log_x - self.mu) / self.sigma) ** 2
+            - 0.5 * ((log_x - self.loc) / self.scale) ** 2
         )
         return jnp.sum(element_log_prob)
 
@@ -56,9 +56,8 @@ class LogNormal(Prior[T]):
         shape: Optional[Tuple[int, ...]] = None,
     ) -> Array:
         """Sample from prior (returns constrained value)."""
-        sample_shape = shape if shape is not None else ()
-        z = jr.normal(rng_key, shape=sample_shape)
-        return jnp.exp(self.mu + self.sigma * z)
+        z = jr.normal(rng_key, shape=self._sample_shape(params, shape))
+        return jnp.exp(self.loc + self.scale * z)
 
 
 @beartype
@@ -115,9 +114,5 @@ class LogNormalLearnable(Prior[T], Generic[T, MuPrior, SigmaPrior]):
         shape: Optional[Tuple[int, ...]] = None,
     ) -> Array:
         """Sample from prior (returns constrained value)."""
-        mu_val = params.mu.value
-        sigma_val = params.sigma.value
-
-        sample_shape = shape if shape is not None else ()
-        z = jr.normal(rng_key, shape=sample_shape)
-        return jnp.exp(mu_val + sigma_val * z)
+        z = jr.normal(rng_key, shape=self._sample_shape(params, shape))
+        return jnp.exp(params.mu.value + params.sigma.value * z)

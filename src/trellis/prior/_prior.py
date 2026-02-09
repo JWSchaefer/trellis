@@ -48,6 +48,16 @@ class Prior(Spec, ABC, Generic[T]):
     # Default transform - subclasses override for constrained values
     transform: ClassVar[Type[Transform]] = Identity
 
+    def __init__(self, *, transform: Optional[Type[Transform]] = None, **kwargs):
+        """Initialize Prior with optional transform override.
+
+        Args:
+            transform: Optional transform to use instead of class default.
+            **kwargs: Arguments for the Prior fields (value, hyperparameters).
+        """
+        super().__init__(**kwargs)
+        self._transform_override = transform
+
     @abstractmethod
     def log_prob(
         self,
@@ -66,6 +76,25 @@ class Prior(Spec, ABC, Generic[T]):
             Log probability (sum of element-wise log probs for arrays)
         """
         ...
+
+    @staticmethod
+    def _sample_shape(
+        params: 'Prior.Params',
+        shape: Optional[Tuple[int, ...]] = None,
+    ) -> Tuple[int, ...]:
+        """Compute sample shape from params and optional batch shape.
+
+        Args:
+            params: Prior's parameters (uses params.value.shape)
+            shape: Optional batch dimensions to prepend
+
+        Returns:
+            Combined shape: (batch_dims..., param_dims...)
+        """
+        import jax.numpy as jnp
+
+        param_shape = jnp.asarray(params.value).shape
+        return (shape or ()) + param_shape
 
     @abstractmethod
     def sample(
@@ -89,9 +118,10 @@ class Prior(Spec, ABC, Generic[T]):
         ...
 
     def _build_transforms(self) -> Any:
-        """Override to use Prior's class-level transform for the value field.
+        """Override to use Prior's transform for the value field.
 
-        The transform ClassVar on the Prior class applies to the `value` field.
+        Uses instance-level transform override if provided, otherwise
+        falls back to the class-level transform ClassVar.
         Other fields (nested Priors) get their own transforms recursively.
         """
         transforms_cls = getattr(self.__class__, 'Transforms')
@@ -101,8 +131,8 @@ class Prior(Spec, ABC, Generic[T]):
             name = field.name
 
             if name == 'value':
-                # Use the Prior's class-level transform for value
-                transform_cls = self.__class__.transform
+                # Use instance override if provided, otherwise class default
+                transform_cls = self._transform_override or self.__class__.transform
                 if isinstance(transform_cls, type):
                     values[name] = transform_cls()
                 else:

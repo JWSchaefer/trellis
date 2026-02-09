@@ -55,8 +55,7 @@ class HalfNormal(Prior[T]):
         shape: Optional[Tuple[int, ...]] = None,
     ) -> Array:
         """Sample from prior (returns positive values)."""
-        sample_shape = shape if shape is not None else ()
-        z = jr.normal(rng_key, shape=sample_shape)
+        z = jr.normal(rng_key, shape=self._sample_shape(params, shape))
         return self.scale * jnp.abs(z)
 
 
@@ -107,8 +106,5 @@ class HalfNormalLearnable(Prior[T], Generic[T, ScalePrior]):
         shape: Optional[Tuple[int, ...]] = None,
     ) -> Array:
         """Sample from prior (returns positive values)."""
-        scale_val = params.scale.value
-
-        sample_shape = shape if shape is not None else ()
-        z = jr.normal(rng_key, shape=sample_shape)
-        return scale_val * jnp.abs(z)
+        z = jr.normal(rng_key, shape=self._sample_shape(params, shape))
+        return params.scale.value * jnp.abs(z)
