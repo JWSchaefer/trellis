@@ -19,8 +19,8 @@ print(f'  samples: {samples}')
 print(f'  log_prob: {normal.log_prob(samples[0], normal_params, normal_state)}')
 
 # LogNormal prior (positive values)
-print('\nLogNormal prior (mu=0, sigma=1):')
-lognormal = LogNormal(value=1.0, mu=0.0, sigma=1.0)
+print('\nLogNormal prior (loc=0, scale=1):')
+lognormal = LogNormal(value=1.0, loc=0.0, scale=1.0)
 ln_params = lognormal.init_params()
 ln_state = lognormal.init_state()
 

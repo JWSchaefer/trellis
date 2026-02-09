@@ -19,7 +19,7 @@ from ..transform import Identity
 from ..transform._transform import Transform
 from ._parameter import Parameter
 from ._state import State
-from ._types import P, S, Tr
+from ._types import CS, P, S, Tr
 
 
 def _is_spec_bound(tv: TypeVar) -> bool:
@@ -60,10 +60,11 @@ def _is_list_of_specs(ann) -> tuple[bool, type | None]:
 class SpecMeta(ABCMeta):
     """Metaclass that generates Params, State, and Transforms classes for Specs."""
 
-    ATTRS = ('Params', 'State', 'Transforms')
+    ATTRS = ('Params', 'State', 'CheckedState', 'Transforms')
 
     _params_cache: dict[type, type] = {}
     _state_cache: dict[type, type] = {}
+    _checked_state_cache: dict[type, type] = {}
     _transforms_cache: dict[type, type] = {}
 
     def __new__(mcs, name, bases, namespace, **kwargs):
@@ -73,9 +74,10 @@ class SpecMeta(ABCMeta):
         if name in ('Spec', 'Prior'):
             return cls
 
-        # Generate and attach Params/State/Transforms classes
+        # Generate and attach Params/State/CheckedState/Transforms classes
         setattr(cls, 'Params', mcs._generate_params_class(cls))
         setattr(cls, 'State', mcs._generate_state_class(cls))
+        setattr(cls, 'CheckedState', mcs._generate_checked_state_class(cls))
         setattr(cls, 'Transforms', mcs._generate_transforms_class(cls))
 
         return cls
@@ -169,6 +171,49 @@ class SpecMeta(ABCMeta):
         return StateClass
 
     @classmethod
+    def _generate_checked_state_class(mcs, spec_cls: type) -> type:
+        """Generate frozen dataclass for validated state (non-Optional fields)."""
+        if spec_cls in mcs._checked_state_cache:
+            return mcs._checked_state_cache[spec_cls]
+
+        hints = get_type_hints(spec_cls)
+        fields = []
+
+        for name, ann in hints.items():
+            if name in mcs.ATTRS:
+                continue
+
+            origin = get_origin(ann) or ann
+
+            if isinstance(origin, type) and issubclass(origin, State):
+                inner_type = get_args(ann)[0] if get_args(ann) else Any
+                fields.append((name, inner_type))  # Non-Optional
+
+            elif isinstance(origin, type) and issubclass(origin, Spec):
+                nested_checked = mcs._generate_checked_state_class(origin)
+                if dataclass_fields(nested_checked):
+                    fields.append((name, nested_checked))
+
+            elif origin is list:
+                is_list, inner_spec = _is_list_of_specs(ann)
+                if is_list and inner_spec is not None:
+                    nested_checked = mcs._generate_checked_state_class(inner_spec)
+                    if dataclass_fields(nested_checked):
+                        fields.append((name, tuple))
+
+        class_name = f'{spec_cls.__name__}CheckedState'
+        CheckedStateClass = make_dataclass(class_name, fields, frozen=True)
+
+        jax.tree_util.register_dataclass(
+            CheckedStateClass,
+            data_fields=[f[0] for f in fields],
+            meta_fields=[],
+        )
+
+        mcs._checked_state_cache[spec_cls] = CheckedStateClass
+        return CheckedStateClass
+
+    @classmethod
     def _generate_transforms_class(mcs, spec_cls: type) -> type:
         """Generate frozen dataclass for a Spec's transforms."""
         if spec_cls in mcs._transforms_cache:
@@ -207,7 +252,7 @@ class SpecMeta(ABCMeta):
         return TransformsClass
 
 
-class Spec(ABC, Generic[P, S, Tr], metaclass=SpecMeta):
+class Spec(ABC, Generic[P, S, CS, Tr], metaclass=SpecMeta):
     """Base class for declarative model definitions.
 
     Subclasses define model structure via type hints:
@@ -240,6 +285,7 @@ class Spec(ABC, Generic[P, S, Tr], metaclass=SpecMeta):
 
     Params: type[P]  # Set by metaclass
     State: type[S]  # Set by metaclass
+    CheckedState: type[CS]  # Set by metaclass
     Transforms: type[Tr]  # Set by metaclass
 
     def __init__(self, **kwargs):
@@ -357,6 +403,24 @@ class Spec(ABC, Generic[P, S, Tr], metaclass=SpecMeta):
                     state[name] = tuple(s.init_state() for s in nested_specs)
 
         return state_cls(**state)
+
+    @classmethod
+    def check_state(cls, state: S, *field_names: str):
+        """Validate state fields and return CheckedState with narrowed types.
+
+        Args:
+            state: The State instance to validate
+            *field_names: Names of fields that must not be None
+
+        Returns:
+            CheckedState instance with non-Optional field types
+
+        Raises:
+            StateValidationError: If any specified field is None
+        """
+        from ._requires import _validate_and_convert
+
+        return _validate_and_convert(cls, state, field_names)
 
     def get_transforms(self) -> Tr:
         """Get transforms with named attribute access.

@@ -11,22 +11,22 @@ from ..prior._prior import Prior
 from ..transform._transform import Transform
 from ._params_structure import ParamsStructure
 from ._spec import Spec
-from ._types import P, S, Tr
+from ._types import CS, P, S, Tr
 
 
 @jax.tree_util.register_pytree_node_class
 @dataclass(frozen=True)
-class Model(Generic[P, S, Tr]):
+class Model(Generic[P, S, CS, Tr]):
     """
     Immutable container binding a Spec with typed params and state.
     """
 
-    spec: Spec[P, S, Tr]
+    spec: Spec[P, S, CS, Tr]
     params: P
     state: S
 
     @classmethod
-    def from_spec(cls, spec: Spec[P, S, Tr]) -> Model[P, S, Tr]:
+    def from_spec(cls, spec: Spec[P, S, CS, Tr]) -> Model[P, S, CS, Tr]:
         """Create Model from an instantiated Spec."""
         return cls(
             spec=spec,
@@ -34,11 +34,11 @@ class Model(Generic[P, S, Tr]):
             state=spec.init_state(),
         )
 
-    def replace_params(self, params: P) -> Model[P, S, Tr]:
+    def replace_params(self, params: P) -> Model[P, S, CS, Tr]:
         """Return new Model with updated params."""
         return replace(self, params=params)
 
-    def replace_state(self, state: S) -> Model[P, S, Tr]:
+    def replace_state(self, state: S) -> Model[P, S, CS, Tr]:
         """Return new Model with updated state."""
         return replace(self, state=state)
 
@@ -74,7 +74,7 @@ class Model(Generic[P, S, Tr]):
 
     def unflatten_params(
         self, flat: jnp.ndarray, structure: ParamsStructure
-    ) -> Model[P, S, Tr]:
+    ) -> Model[P, S, CS, Tr]:
         """Reconstruct Model with params from a 1D array.
 
         Args:
@@ -106,7 +106,7 @@ class Model(Generic[P, S, Tr]):
         transforms = self.spec.get_transforms()
         return self._apply_transforms(self.params, transforms, inverse=True)
 
-    def from_unconstrained(self, raw_params: P) -> Model[P, S, Tr]:
+    def from_unconstrained(self, raw_params: P) -> Model[P, S, CS, Tr]:
         """Return new Model with params transformed from unconstrained space."""
         transforms = self.spec.get_transforms()
         constrained = self._apply_transforms(
