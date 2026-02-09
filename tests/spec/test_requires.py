@@ -122,3 +122,55 @@ def test_requires_decorator_preserves_metadata():
 
     assert my_function.__name__ == 'my_function'
     assert my_function.__doc__ == 'Docstring for my_function.'
+
+
+def test_requires_string_forward_reference():
+    """@requires works with string class name (forward reference)."""
+
+    @requires('SampleSpec', 'computed')
+    def use_computed(state: 'SampleSpec.CheckedState') -> Array:
+        return state.computed * 2
+
+    spec = SampleSpec()
+    state = spec.init_state()
+    state = replace(state, computed=jnp.array([1.0]))
+
+    result = use_computed(state)
+    assert jnp.allclose(result, jnp.array([2.0]))
+
+
+class SpecWithMethod(Spec):
+    """Spec with a method that uses @requires with forward reference."""
+
+    value: State[Array]
+
+    @requires('SpecWithMethod', 'value')
+    def compute(
+        self,
+        params: 'SpecWithMethod.Params',
+        state: 'SpecWithMethod.CheckedState',
+    ) -> Array:
+        return state.value * 3
+
+
+def test_requires_method_with_forward_reference():
+    """@requires works on methods with string forward reference."""
+    spec = SpecWithMethod()
+    params = spec.init_params()
+    state = spec.init_state()
+    state = replace(state, value=jnp.array([2.0]))
+
+    result = spec.compute(params, state)
+    assert jnp.allclose(result, jnp.array([6.0]))
+
+
+def test_requires_method_failure():
+    """@requires on methods raises when fields are missing."""
+    spec = SpecWithMethod()
+    params = spec.init_params()
+    state = spec.init_state()  # value is None
+
+    with pytest.raises(StateValidationError) as exc:
+        spec.compute(params, state)
+
+    assert 'value' in str(exc.value)

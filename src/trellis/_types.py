@@ -4,4 +4,4 @@ from jaxtyping import Array, Float
 T = TypeVar('T', float, Float[Array, '...'], Array)
 S = TypeVar('S', float, Float[Array, '...'], Array)
 
-Scalar: TypeAlias = Float[Array, ''] | Float[Array, 'N']
+Scalar: TypeAlias = Float[Array, '']
