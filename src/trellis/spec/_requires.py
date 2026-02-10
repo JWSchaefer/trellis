@@ -4,7 +4,9 @@ import inspect
 from dataclasses import fields as dataclass_fields
 from functools import wraps
 
+from beartype.roar import BeartypeCallHintViolation
 from beartype.typing import Callable, TypeVar, Union
+from jaxtyping import TypeCheckError
 
 R = TypeVar('R')
 
@@ -41,7 +43,10 @@ def _validate_and_convert(
         if f.name in checked_fields
     }
 
-    return checked_cls(**kwargs)
+    try:
+        return checked_cls(**kwargs)
+    except BeartypeCallHintViolation as e:
+        raise TypeCheckError(str(e)) from e
 
 
 def _resolve_spec_cls(
