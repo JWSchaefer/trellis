@@ -195,15 +195,23 @@ class Model(Generic[P, S, CS, Tr]):
                 continue
 
             # Handle list[Spec] - both spec and params are tuples
-            if isinstance(nested_spec, tuple) and isinstance(nested_params, tuple):
+            if isinstance(nested_spec, tuple) and isinstance(
+                nested_params, tuple
+            ):
                 for spec_item, params_item in zip(nested_spec, nested_params):
                     if isinstance(spec_item, Prior):
                         value = jnp.asarray(params_item.value)
                         state = spec_item.init_state()
-                        total = total + spec_item.log_prob(value, params_item, state)
-                        total = total + self._eval_priors(spec_item, params_item)
+                        total = total + spec_item.log_prob(
+                            value, params_item, state
+                        )
+                        total = total + self._eval_priors(
+                            spec_item, params_item
+                        )
                     elif isinstance(spec_item, Spec):
-                        total = total + self._eval_priors(spec_item, params_item)
+                        total = total + self._eval_priors(
+                            spec_item, params_item
+                        )
                 continue
 
             if isinstance(nested_spec, Prior):
@@ -255,7 +263,7 @@ class Model(Generic[P, S, CS, Tr]):
     def __call__(self, *args, **kwargs) -> Any:
         if not callable(self.spec):
             raise TypeError(f'{type(self.spec).__name__} is not callable')
-        return self.spec(self.state, self.params, *args, **kwargs)
+        return self.spec(self.params, self.state, *args, **kwargs)
 
     def tree_flatten(self):
         return self.params, self.state

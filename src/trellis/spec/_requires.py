@@ -4,11 +4,22 @@ import inspect
 from dataclasses import fields as dataclass_fields
 from functools import wraps
 
+from beartype import beartype
 from beartype.roar import BeartypeCallHintViolation
 from beartype.typing import Callable, TypeVar, Union
-from jaxtyping import TypeCheckError
+from jaxtyping import TypeCheckError, jaxtyped
 
 R = TypeVar('R')
+
+
+@jaxtyped(typechecker=beartype)
+def _create_checked_state(checked_cls: type, **kwargs):
+    """Create CheckedState in isolated jaxtyping context.
+
+    This runs in its own dimension memo, so state dimensions
+    don't conflict with input dimensions from the outer function.
+    """
+    return checked_cls(**kwargs)
 
 
 class StateValidationError(ValueError):
@@ -29,7 +40,12 @@ def _validate_and_convert(
     state: object,
     required_fields: tuple[str, ...],
 ) -> object:
-    """Validate state fields and convert to CheckedState."""
+    """Validate state fields and convert to CheckedState.
+
+    Creates CheckedState in an isolated jaxtyping context so that
+    state dimension tracking doesn't conflict with input dimensions
+    from the outer function.
+    """
     checked_cls = getattr(spec_cls, 'CheckedState')
 
     missing = [f for f in required_fields if getattr(state, f, None) is None]
@@ -44,7 +60,8 @@ def _validate_and_convert(
     }
 
     try:
-        return checked_cls(**kwargs)
+        # Create in isolated jaxtyping context to avoid dimension conflicts
+        return _create_checked_state(checked_cls, **kwargs)
     except BeartypeCallHintViolation as e:
         raise TypeCheckError(str(e)) from e
 

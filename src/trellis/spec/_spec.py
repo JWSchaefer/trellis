@@ -146,6 +146,14 @@ class SpecMeta(ABCMeta):
                 inner_type = get_args(ann)[0] if get_args(ann) else Any
                 fields.append((name, Optional[inner_type], None))
 
+            elif isinstance(origin, TypeVar):
+                if _is_spec_bound(origin):
+                    fields.append((name, Any, None))
+
+            elif isinstance(origin, TypeVar):
+                if _is_spec_bound(origin):
+                    fields.append((name, Any, None))
+
             elif isinstance(origin, type) and issubclass(origin, Spec):
                 nested_state = mcs._generate_state_class(origin)
                 if dataclass_fields(nested_state):
@@ -188,6 +196,10 @@ class SpecMeta(ABCMeta):
             if isinstance(origin, type) and issubclass(origin, State):
                 inner_type = get_args(ann)[0] if get_args(ann) else Any
                 fields.append((name, inner_type))  # Non-Optional
+
+            elif isinstance(origin, TypeVar):
+                if _is_spec_bound(origin):
+                    fields.append((name, Any))  # Non-Optional for checked state
 
             elif isinstance(origin, type) and issubclass(origin, Spec):
                 nested_checked = mcs._generate_checked_state_class(origin)
@@ -391,6 +403,11 @@ class Spec(ABC, Generic[P, S, CS, Tr], metaclass=SpecMeta):
 
             if isinstance(origin, type) and issubclass(origin, State):
                 state[name] = None
+
+            elif isinstance(origin, TypeVar):
+                if _is_spec_bound(origin):
+                    nested_spec = getattr(self, name)
+                    state[name] = nested_spec.init_state()
 
             elif isinstance(origin, type) and issubclass(origin, Spec):
                 nested_spec = getattr(self, name)
