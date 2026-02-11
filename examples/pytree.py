@@ -10,8 +10,8 @@ class MyModel(Spec):
 
 
 model_spec = MyModel(
-    alpha=LogNormal(value=1.0, mu=0.0, sigma=1.0),
-    beta=LogNormal(value=2.0, mu=0.0, sigma=1.0),
+    alpha=LogNormal(value=1.0, loc=0.0, scale=1.0),
+    beta=LogNormal(value=2.0, loc=0.0, scale=1.0),
 )
 
 model = Model.from_spec(model_spec)

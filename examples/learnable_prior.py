@@ -13,8 +13,8 @@ class LearnablePriorSpec(Spec):
 learnable_spec = LearnablePriorSpec(
     ell=LogNormalLearnable(
         value=1.0,
-        mu=Normal(value=0.0, loc=0.0, scale=10.0),
-        sigma=HalfNormal(value=1.0, scale=1.0),
+        loc=Normal(value=0.0, loc=0.0, scale=10.0),
+        scale=HalfNormal(value=1.0, scale=1.0),
     )
 )
 learnable_params = learnable_spec.init_params()
@@ -22,8 +22,8 @@ learnable_params = learnable_spec.init_params()
 print(f'Spec: {learnable_spec}')
 print(f'Params: {learnable_params}')
 print(f'Params.ell.value: {learnable_params.ell.value}')
-print(f'Params.ell.mu.value: {learnable_params.ell.mu.value}')
-print(f'Params.ell.sigma.value: {learnable_params.ell.sigma.value}\n')
+print(f'Params.ell.loc.value: {learnable_params.ell.loc.value}')
+print(f'Params.ell.scale.value: {learnable_params.ell.scale.value}\n')
 
 leaves = jax.tree.leaves(learnable_params)
 print(f'tree_leaves(params): {leaves}')

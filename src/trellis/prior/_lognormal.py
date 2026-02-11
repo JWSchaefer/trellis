@@ -81,8 +81,8 @@ class LogNormalLearnable(Prior[T], Generic[T, MuPrior, SigmaPrior]):
     """
 
     value: Parameter[T]
-    mu: MuPrior
-    sigma: SigmaPrior
+    loc: MuPrior
+    scale: SigmaPrior
     transform: ClassVar[Type[Transform]] = Log
 
     @typecheck
@@ -93,15 +93,15 @@ class LogNormalLearnable(Prior[T], Generic[T, MuPrior, SigmaPrior]):
         state: 'LogNormalLearnable.State',
     ) -> Scalar:
         """Log probability density at value in constrained space."""
-        mu_val = params.mu.value
-        sigma_val = params.sigma.value
+        loc_val = params.loc.value
+        scale_val = params.scale.value
 
         log_x = jnp.log(value)
         element_log_prob = (
             -log_x
-            - jnp.log(sigma_val)
+            - jnp.log(scale_val)
             - 0.5 * jnp.log(2 * jnp.pi)
-            - 0.5 * ((log_x - mu_val) / sigma_val) ** 2
+            - 0.5 * ((log_x - loc_val) / scale_val) ** 2
         )
         return jnp.sum(element_log_prob)
 
@@ -115,4 +115,4 @@ class LogNormalLearnable(Prior[T], Generic[T, MuPrior, SigmaPrior]):
     ) -> Array:
         """Sample from prior (returns constrained value)."""
         z = jr.normal(rng_key, shape=self._sample_shape(params, shape))
-        return jnp.exp(params.mu.value + params.sigma.value * z)
+        return jnp.exp(params.loc.value + params.scale.value * z)

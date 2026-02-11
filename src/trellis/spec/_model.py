@@ -19,9 +19,20 @@ from ._types import CS, P, S, Tr
 class Model(Generic[P, S, CS, Tr]):
     """
     Immutable container binding a Spec with typed params and state.
+
+    Model provides parameter infrastructure:
+    - flatten_params / unflatten_params: For external optimizers
+    - to_unconstrained / from_unconstrained: Transform to/from optimization space
+    - log_prior: Evaluate prior densities with Jacobian correction
+    - replace_params / replace_state: Immutable updates
+
+    Spec behavior (fit, __call__, domain methods) should be called explicitly:
+        state = model.spec.fit(model.params, model.state, x, y)
+        model = model.replace_state(state)
+        preds = model.spec(model.params, model.state, x_test)
     """
 
-    spec: Spec[P, S, CS, Tr]
+    spec: Tr
     params: P
     state: S
 
@@ -259,11 +270,6 @@ class Model(Generic[P, S, CS, Tr]):
                 total = total + self._log_det_jacobian(value, transform)
 
         return total
-
-    def __call__(self, *args, **kwargs) -> Any:
-        if not callable(self.spec):
-            raise TypeError(f'{type(self.spec).__name__} is not callable')
-        return self.spec(self.params, self.state, *args, **kwargs)
 
     def tree_flatten(self):
         return self.params, self.state

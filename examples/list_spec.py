@@ -25,9 +25,9 @@ class MultiKernelModel(Spec):
 def main():
     model = MultiKernelModel(
         kernels=[
-            KernelSpec(lengthscale=LogNormal(value=1.0, mu=0.0, sigma=1.0)),
-            KernelSpec(lengthscale=LogNormal(value=2.0, mu=0.0, sigma=1.0)),
-            KernelSpec(lengthscale=LogNormal(value=0.5, mu=0.0, sigma=1.0)),
+            KernelSpec(lengthscale=LogNormal(value=1.0, loc=0.0, scale=1.0)),
+            KernelSpec(lengthscale=LogNormal(value=2.0, loc=0.0, scale=1.0)),
+            KernelSpec(lengthscale=LogNormal(value=0.5, loc=0.0, scale=1.0)),
         ]
     )
 

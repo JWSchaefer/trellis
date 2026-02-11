@@ -14,8 +14,8 @@ class MyModel(Spec):
 
 # Instantiate with concrete prior values
 model_spec = MyModel(
-    alpha=LogNormal(value=1.0, mu=0.0, sigma=1.0),
-    beta=LogNormal(value=2.0, mu=0.0, sigma=0.5),
+    alpha=LogNormal(value=1.0, loc=0.0, scale=1.0),
+    beta=LogNormal(value=2.0, loc=0.0, scale=0.5),
 )
 
 # The params tree mirrors the spec structure
