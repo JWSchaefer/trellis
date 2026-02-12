@@ -260,6 +260,12 @@ class SpecMeta(ABCMeta):
         class_name = f'{spec_cls.__name__}Transforms'
         TransformsClass = make_dataclass(class_name, fields, frozen=True)
 
+        jax.tree_util.register_dataclass(
+            TransformsClass,
+            data_fields=[f[0] for f in fields],
+            meta_fields=[],
+        )
+
         mcs._transforms_cache[spec_cls] = TransformsClass
         return TransformsClass
 
