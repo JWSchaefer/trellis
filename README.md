@@ -4,7 +4,7 @@
 <img src="resources/icon.svg" height="160"/><a/>
 </p>
 
-A framework for probabilistic model specification with `jax`.
+A declarative framework for probabalistic model specification with `jax`.
 
 ## 📑 Design
 
