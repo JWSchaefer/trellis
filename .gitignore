@@ -1,3 +1,4 @@
+justfile
 **/fixtures/**
 CLAUDE.md
 .claude

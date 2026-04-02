@@ -2,6 +2,8 @@ from abc import ABC, ABCMeta
 from dataclasses import fields as dataclass_fields
 from dataclasses import make_dataclass
 
+import jax.numpy as jnp
+import jax.random
 import jax.tree_util
 from beartype.typing import (
     Any,
@@ -9,12 +11,14 @@ from beartype.typing import (
     Generic,
     Optional,
     TypeVar,
+    Union,
     get_args,
     get_origin,
     get_type_hints,
 )
 from jax import Array
 
+from .._types import Scalar
 from ..transform import Identity
 from ..transform._transform import Transform
 from ._parameter import Parameter
@@ -57,6 +61,21 @@ def _is_list_of_specs(ann) -> tuple[bool, type | None]:
     return False, None
 
 
+def _is_dict_of_specs(ann) -> tuple[bool, type | None]:
+    """Check if annotation is dict[K, SomeSpec]. Returns (is_dict, value_spec_type)."""
+    origin = get_origin(ann)
+    if origin is not dict:
+        return False, None
+    args = get_args(ann)
+    if len(args) < 2:
+        return False, None
+    inner_type = args[1]  # value type (args[0] is the key type)
+    inner_origin = get_origin(inner_type) or inner_type
+    if isinstance(inner_origin, type) and issubclass(inner_origin, Spec):
+        return True, inner_origin
+    return False, None
+
+
 class SpecMeta(ABCMeta):
     """Metaclass that generates Params, State, and Transforms classes for Specs."""
 
@@ -66,6 +85,30 @@ class SpecMeta(ABCMeta):
     _state_cache: dict[type, type] = {}
     _checked_state_cache: dict[type, type] = {}
     _transforms_cache: dict[type, type] = {}
+
+    @classmethod
+    def _find_parent_generated_class(
+        mcs, spec_cls: type, attr_name: str
+    ) -> tuple[type | None, set[str]]:
+        """Find parent Spec's generated class and its field names.
+
+        Args:
+            spec_cls: The Spec class to find parent for
+            attr_name: 'Params', 'State', 'CheckedState', or 'Transforms'
+
+        Returns:
+            (parent_class, inherited_field_names) or (None, empty_set)
+        """
+        for base in spec_cls.__mro__[1:]:
+            if (
+                base not in (Spec, object)
+                and hasattr(base, attr_name)
+                and base.__name__ not in ('Spec', 'Prior')
+            ):
+                parent_cls = getattr(base, attr_name)
+                inherited_fields = {f.name for f in dataclass_fields(parent_cls)}
+                return parent_cls, inherited_fields
+        return None, set()
 
     def __new__(mcs, name, bases, namespace, **kwargs):
         cls = super().__new__(mcs, name, bases, namespace, **kwargs)
@@ -88,11 +131,20 @@ class SpecMeta(ABCMeta):
         if spec_cls in mcs._params_cache:
             return mcs._params_cache[spec_cls]
 
+        # Find parent Params class for inheritance
+        parent_params, inherited_fields = mcs._find_parent_generated_class(
+            spec_cls, 'Params'
+        )
+
         hints = get_type_hints(spec_cls)
         fields = []
 
         for name, ann in hints.items():
             if name in mcs.ATTRS:
+                continue
+
+            # Skip fields already defined in parent
+            if name in inherited_fields:
                 continue
 
             origin = get_origin(ann) or ann
@@ -115,12 +167,22 @@ class SpecMeta(ABCMeta):
                     mcs._generate_params_class(inner_spec)  # Ensure nested class exists
                     fields.append((name, tuple))
 
+            elif origin is dict:
+                is_dict, inner_spec = _is_dict_of_specs(ann)
+                if is_dict and inner_spec is not None:
+                    mcs._generate_params_class(inner_spec)  # Ensure nested class exists
+                    fields.append((name, dict))
+
         class_name = f'{spec_cls.__name__}Params'
-        ParamsClass = make_dataclass(class_name, fields, frozen=True)
+        bases = (parent_params,) if parent_params is not None else ()
+        ParamsClass = make_dataclass(class_name, fields, bases=bases, frozen=True)
+
+        # Collect all data fields including inherited ones
+        all_data_fields = list(inherited_fields) + [f[0] for f in fields]
 
         jax.tree_util.register_dataclass(
             ParamsClass,
-            data_fields=[f[0] for f in fields],
+            data_fields=all_data_fields,
             meta_fields=[],
         )
 
@@ -133,11 +195,20 @@ class SpecMeta(ABCMeta):
         if spec_cls in mcs._state_cache:
             return mcs._state_cache[spec_cls]
 
+        # Find parent State class for inheritance
+        parent_state, inherited_fields = mcs._find_parent_generated_class(
+            spec_cls, 'State'
+        )
+
         hints = get_type_hints(spec_cls)
         fields = []
 
         for name, ann in hints.items():
             if name in mcs.ATTRS:
+                continue
+
+            # Skip fields already defined in parent
+            if name in inherited_fields:
                 continue
 
             origin = get_origin(ann) or ann
@@ -150,28 +221,32 @@ class SpecMeta(ABCMeta):
                 if _is_spec_bound(origin):
                     fields.append((name, Any, None))
 
-            elif isinstance(origin, TypeVar):
-                if _is_spec_bound(origin):
-                    fields.append((name, Any, None))
-
             elif isinstance(origin, type) and issubclass(origin, Spec):
                 nested_state = mcs._generate_state_class(origin)
-                if dataclass_fields(nested_state):
-                    fields.append((name, nested_state))
+                fields.append((name, Optional[nested_state], None))
 
             elif origin is list:
                 is_list, inner_spec = _is_list_of_specs(ann)
                 if is_list and inner_spec is not None:
-                    nested_state = mcs._generate_state_class(inner_spec)
-                    if dataclass_fields(nested_state):
-                        fields.append((name, tuple))
+                    mcs._generate_state_class(inner_spec)  # Ensure nested class exists
+                    fields.append((name, Optional[tuple], None))
+
+            elif origin is dict:
+                is_dict, inner_spec = _is_dict_of_specs(ann)
+                if is_dict and inner_spec is not None:
+                    mcs._generate_state_class(inner_spec)  # Ensure nested class exists
+                    fields.append((name, Optional[dict], None))
 
         class_name = f'{spec_cls.__name__}State'
-        StateClass = make_dataclass(class_name, fields, frozen=True)
+        bases = (parent_state,) if parent_state is not None else ()
+        StateClass = make_dataclass(class_name, fields, bases=bases, frozen=True)
+
+        # Collect all data fields including inherited ones
+        all_data_fields = list(inherited_fields) + [f[0] for f in fields]
 
         jax.tree_util.register_dataclass(
             StateClass,
-            data_fields=[f[0] for f in fields],
+            data_fields=all_data_fields,
             meta_fields=[],
         )
 
@@ -184,11 +259,20 @@ class SpecMeta(ABCMeta):
         if spec_cls in mcs._checked_state_cache:
             return mcs._checked_state_cache[spec_cls]
 
+        # Find parent CheckedState class for inheritance
+        parent_checked, inherited_fields = mcs._find_parent_generated_class(
+            spec_cls, 'CheckedState'
+        )
+
         hints = get_type_hints(spec_cls)
         fields = []
 
         for name, ann in hints.items():
             if name in mcs.ATTRS:
+                continue
+
+            # Skip fields already defined in parent
+            if name in inherited_fields:
                 continue
 
             origin = get_origin(ann) or ann
@@ -203,22 +287,30 @@ class SpecMeta(ABCMeta):
 
             elif isinstance(origin, type) and issubclass(origin, Spec):
                 nested_checked = mcs._generate_checked_state_class(origin)
-                if dataclass_fields(nested_checked):
-                    fields.append((name, nested_checked))
+                fields.append((name, nested_checked))
 
             elif origin is list:
                 is_list, inner_spec = _is_list_of_specs(ann)
                 if is_list and inner_spec is not None:
-                    nested_checked = mcs._generate_checked_state_class(inner_spec)
-                    if dataclass_fields(nested_checked):
-                        fields.append((name, tuple))
+                    mcs._generate_checked_state_class(inner_spec)  # Ensure nested class exists
+                    fields.append((name, tuple))
+
+            elif origin is dict:
+                is_dict, inner_spec = _is_dict_of_specs(ann)
+                if is_dict and inner_spec is not None:
+                    mcs._generate_checked_state_class(inner_spec)  # Ensure nested class exists
+                    fields.append((name, dict))
 
         class_name = f'{spec_cls.__name__}CheckedState'
-        CheckedStateClass = make_dataclass(class_name, fields, frozen=True)
+        bases = (parent_checked,) if parent_checked is not None else ()
+        CheckedStateClass = make_dataclass(class_name, fields, bases=bases, frozen=True)
+
+        # Collect all data fields including inherited ones
+        all_data_fields = list(inherited_fields) + [f[0] for f in fields]
 
         jax.tree_util.register_dataclass(
             CheckedStateClass,
-            data_fields=[f[0] for f in fields],
+            data_fields=all_data_fields,
             meta_fields=[],
         )
 
@@ -231,11 +323,20 @@ class SpecMeta(ABCMeta):
         if spec_cls in mcs._transforms_cache:
             return mcs._transforms_cache[spec_cls]
 
+        # Find parent Transforms class for inheritance
+        parent_transforms, inherited_fields = mcs._find_parent_generated_class(
+            spec_cls, 'Transforms'
+        )
+
         hints = get_type_hints(spec_cls)
         fields = []
 
         for name, ann in hints.items():
             if name in mcs.ATTRS:
+                continue
+
+            # Skip fields already defined in parent
+            if name in inherited_fields:
                 continue
 
             origin = get_origin(ann) or ann
@@ -257,12 +358,22 @@ class SpecMeta(ABCMeta):
                     mcs._generate_transforms_class(inner_spec)  # Ensure nested class exists
                     fields.append((name, tuple))
 
+            elif origin is dict:
+                is_dict, inner_spec = _is_dict_of_specs(ann)
+                if is_dict and inner_spec is not None:
+                    mcs._generate_transforms_class(inner_spec)  # Ensure nested class exists
+                    fields.append((name, dict))
+
         class_name = f'{spec_cls.__name__}Transforms'
-        TransformsClass = make_dataclass(class_name, fields, frozen=True)
+        bases = (parent_transforms,) if parent_transforms is not None else ()
+        TransformsClass = make_dataclass(class_name, fields, bases=bases, frozen=True)
+
+        # Collect all data fields including inherited ones
+        all_data_fields = list(inherited_fields) + [f[0] for f in fields]
 
         jax.tree_util.register_dataclass(
             TransformsClass,
-            data_fields=[f[0] for f in fields],
+            data_fields=all_data_fields,
             meta_fields=[],
         )
 
@@ -386,6 +497,12 @@ class Spec(ABC, Generic[P, S, CS, Tr], metaclass=SpecMeta):
                     nested_specs = getattr(self, name)
                     params[name] = tuple(s.init_params(rng) for s in nested_specs)
 
+            elif origin is dict:
+                is_dict, _ = _is_dict_of_specs(ann)
+                if is_dict:
+                    nested_specs = getattr(self, name)
+                    params[name] = {k: v.init_params(rng) for k, v in nested_specs.items()}
+
         return self.__class__.Params(**params)
 
     def init_state(self) -> S:
@@ -424,6 +541,12 @@ class Spec(ABC, Generic[P, S, CS, Tr], metaclass=SpecMeta):
                 if is_list:
                     nested_specs = getattr(self, name)
                     state[name] = tuple(s.init_state() for s in nested_specs)
+
+            elif origin is dict:
+                is_dict, _ = _is_dict_of_specs(ann)
+                if is_dict:
+                    nested_specs = getattr(self, name)
+                    state[name] = {k: v.init_state() for k, v in nested_specs.items()}
 
         return state_cls(**state)
 
@@ -498,7 +621,221 @@ class Spec(ABC, Generic[P, S, CS, Tr], metaclass=SpecMeta):
                 else:
                     values[name] = Identity()
 
+            elif origin is dict:
+                is_dict, _ = _is_dict_of_specs(ann)
+                if is_dict:
+                    nested_specs = getattr(self, name)
+                    values[name] = {k: v._build_transforms() for k, v in nested_specs.items()}
+                else:
+                    values[name] = Identity()
+
             else:
                 values[name] = Identity()
 
         return transforms_cls(**values)
+
+    def sample_params(self, rng_key: Array) -> P:
+        """Sample parameters from their priors.
+
+        Traverses the Spec tree, sampling from each Prior and
+        returning a new Params instance with sampled values.
+
+        For Priors, calls prior.sample() to get a new value.
+        For non-Prior Specs, recursively samples nested params.
+        For NoPrior fields, keeps the current value.
+
+        Args:
+            rng_key: JAX random key for sampling.
+
+        Returns:
+            Params instance with values sampled from priors.
+        """
+        hints = get_type_hints(self.__class__)
+        params = {}
+        key_idx = 0
+
+        def next_key():
+            nonlocal rng_key, key_idx
+            key_idx += 1
+            rng_key, subkey = jax.random.split(rng_key)
+            return subkey
+
+        for name, ann in hints.items():
+            if name in SpecMeta.ATTRS:
+                continue
+
+            origin = get_origin(ann) or ann
+
+            if isinstance(origin, type) and issubclass(origin, Parameter):
+                # Terminal parameter without prior - keep default value
+                params[name] = getattr(self, name)
+
+            elif isinstance(origin, TypeVar):
+                if _is_parameter_bound(origin):
+                    params[name] = getattr(self, name)
+                elif _is_spec_bound(origin):
+                    nested_spec = getattr(self, name)
+                    if self._is_prior(nested_spec):
+                        # Sample from prior
+                        nested_params = nested_spec.init_params()
+                        nested_state = nested_spec.init_state()
+                        sampled_value = nested_spec.sample(
+                            next_key(), nested_params, nested_state
+                        )
+                        params[name] = nested_spec._replace_value(
+                            nested_params, sampled_value
+                        )
+                    else:
+                        params[name] = nested_spec.sample_params(next_key())
+
+            elif isinstance(origin, type) and issubclass(origin, Spec):
+                nested_spec = getattr(self, name)
+                if self._is_prior(nested_spec):
+                    # Sample from prior
+                    nested_params = nested_spec.init_params()
+                    nested_state = nested_spec.init_state()
+                    sampled_value = nested_spec.sample(
+                        next_key(), nested_params, nested_state
+                    )
+                    params[name] = nested_spec._replace_value(
+                        nested_params, sampled_value
+                    )
+                else:
+                    params[name] = nested_spec.sample_params(next_key())
+
+            elif origin is list:
+                is_list, _ = _is_list_of_specs(ann)
+                if is_list:
+                    nested_specs = getattr(self, name)
+                    sampled = []
+                    for nested_spec in nested_specs:
+                        if self._is_prior(nested_spec):
+                            nested_params = nested_spec.init_params()
+                            nested_state = nested_spec.init_state()
+                            sampled_value = nested_spec.sample(
+                                next_key(), nested_params, nested_state
+                            )
+                            sampled.append(
+                                nested_spec._replace_value(
+                                    nested_params, sampled_value
+                                )
+                            )
+                        else:
+                            sampled.append(nested_spec.sample_params(next_key()))
+                    params[name] = tuple(sampled)
+
+            elif origin is dict:
+                is_dict, _ = _is_dict_of_specs(ann)
+                if is_dict:
+                    nested_specs = getattr(self, name)
+                    sampled = {}
+                    for k, nested_spec in nested_specs.items():
+                        if self._is_prior(nested_spec):
+                            nested_params = nested_spec.init_params()
+                            nested_state = nested_spec.init_state()
+                            sampled_value = nested_spec.sample(
+                                next_key(), nested_params, nested_state
+                            )
+                            sampled[k] = nested_spec._replace_value(
+                                nested_params, sampled_value
+                            )
+                        else:
+                            sampled[k] = nested_spec.sample_params(next_key())
+                    params[name] = sampled
+
+        return self.__class__.Params(**params)
+
+    @staticmethod
+    def _is_prior(spec: 'Spec') -> bool:
+        """Check if a Spec is a Prior (has sample and log_prob methods)."""
+        return hasattr(spec, 'sample') and hasattr(spec, 'log_prob')
+
+    @staticmethod
+    def _replace_value(params: Any, new_value: Array) -> Any:
+        """Replace the value field in a Prior's params with a new value."""
+        from dataclasses import replace
+        return replace(params, value=new_value)
+
+    def eval_priors(self, params: P) -> Scalar:
+        """Evaluate log prior density for all Priors in the Spec tree.
+
+        Walks the Spec tree and typed params in parallel. For each Prior,
+        evaluates its log_prob on the parameter value. Recursively handles
+        nested Specs and lists of Specs.
+
+        Args:
+            params: Typed Params dataclass with parameter values.
+
+        Returns:
+            Sum of all log prior probabilities.
+        """
+        return self._eval_priors(self, params)
+
+    @classmethod
+    def _eval_priors(cls, spec: 'Spec', params: Any) -> Scalar:
+        """Recursively evaluate all priors in the Spec tree.
+
+        Args:
+            spec: Current Spec node in the tree
+            params: Corresponding typed Params dataclass
+
+        Returns:
+            Sum of all log prior probabilities
+        """
+        total = jnp.zeros(())
+
+        for f in dataclass_fields(params):
+            name = f.name
+            nested_spec = getattr(spec, name, None)
+            nested_params = getattr(params, name, None)
+
+            if nested_params is None:
+                continue
+
+            # Handle list[Spec] - both spec and params are tuples
+            if isinstance(nested_spec, tuple) and isinstance(
+                nested_params, tuple
+            ):
+                for spec_item, params_item in zip(nested_spec, nested_params):
+                    if cls._is_prior(spec_item):
+                        value = jnp.asarray(params_item.value)
+                        state = spec_item.init_state()
+                        total = total + spec_item.log_prob(
+                            value, params_item, state
+                        )
+                        total = total + cls._eval_priors(spec_item, params_item)
+                    elif isinstance(spec_item, Spec):
+                        total = total + cls._eval_priors(spec_item, params_item)
+                continue
+
+            # Handle dict[K, Spec] - both spec and params are dicts
+            if isinstance(nested_spec, dict) and isinstance(nested_params, dict):
+                for k in nested_spec:
+                    spec_item = nested_spec[k]
+                    params_item = nested_params[k]
+                    if cls._is_prior(spec_item):
+                        value = jnp.asarray(params_item.value)
+                        state = spec_item.init_state()
+                        total = total + spec_item.log_prob(
+                            value, params_item, state
+                        )
+                        total = total + cls._eval_priors(spec_item, params_item)
+                    elif isinstance(spec_item, Spec):
+                        total = total + cls._eval_priors(spec_item, params_item)
+                continue
+
+            if cls._is_prior(nested_spec):
+                # This is a Prior - evaluate its log_prob
+                value = jnp.asarray(nested_params.value)
+                state = nested_spec.init_state()
+                total = total + nested_spec.log_prob(
+                    value, nested_params, state
+                )
+                # Recurse into the Prior's fields for nested priors (hyperpriors)
+                total = total + cls._eval_priors(nested_spec, nested_params)
+
+            elif isinstance(nested_spec, Spec):
+                # Non-Prior Spec - just recurse
+                total = total + cls._eval_priors(nested_spec, nested_params)
+
+        return total

@@ -13,11 +13,13 @@ from ._prior import Prior
 
 @beartype
 class NoPrior(Prior[T]):
-    """Wrapper for parameters without probabilistic priors.
+    """Wrapper for fixed parameters without probabilistic priors.
 
-    Use when you want a learnable parameter but don't need
-    to specify a prior distribution. log_prob() returns 0
-    (equivalent to an improper uniform prior).
+    Use for parameters that should remain constant during inference.
+    NoPrior parameters are:
+    - Excluded from flatten_learnable() (not sampled in MCMC)
+    - log_prob() returns 0 (no prior contribution)
+    - sample() returns the current value unchanged
 
     Example:
         prior = NoPrior(value=1.0)
@@ -27,6 +29,7 @@ class NoPrior(Prior[T]):
 
     value: Parameter[T]
     transform: ClassVar[Type[Transform]] = Identity
+    is_fixed: ClassVar[bool] = True
 
     @typecheck
     def log_prob(

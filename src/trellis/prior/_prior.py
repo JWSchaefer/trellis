@@ -17,6 +17,7 @@ class Prior(Spec, ABC, Generic[T]):
     Every Prior contains:
     - value: Parameter[T] - the actual parameter value (terminal leaf)
     - transform: ClassVar - the transform to apply (e.g., Log for positive values)
+    - is_fixed: ClassVar[bool] - if True, excluded from flatten_learnable()
 
     Prior extends Spec, so hyperparameters can be:
     - Fixed (plain types like float) - NOT in params tree, accessed via self.x
@@ -47,6 +48,9 @@ class Prior(Spec, ABC, Generic[T]):
 
     # Default transform - subclasses override for constrained values
     transform: ClassVar[Type[Transform]] = Identity
+
+    # If True, excluded from flatten_learnable() (default: learnable)
+    is_fixed: ClassVar[bool] = False
 
     def __init__(self, *, transform: Optional[Type[Transform]] = None, **kwargs):
         """Initialize Prior with optional transform override.

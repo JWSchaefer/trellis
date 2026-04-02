@@ -7,9 +7,8 @@ import jax.numpy as jnp
 from beartype.typing import Any, Generic
 
 from .._types import Scalar
-from ..prior._prior import Prior
 from ..transform._transform import Transform
-from ._params_structure import ParamsStructure
+from ._params_structure import LearnableParamsStructure, ParamsStructure
 from ._spec import Spec
 from ._types import CS, P, S, Tr
 
@@ -112,6 +111,138 @@ class Model(Generic[P, S, CS, Tr]):
         params = jax.tree_util.tree_unflatten(structure.treedef, leaves)
         return self.replace_params(params)
 
+    def flatten_learnable(self) -> tuple[jnp.ndarray, LearnableParamsStructure]:
+        """Flatten learnable params only, excluding fixed (NoPrior) params.
+
+        Fixed params are stored in the structure for restoration during
+        unflatten_learnable(). Use this for MCMC/optimization where fixed
+        params should not receive gradients.
+
+        Returns:
+            flat: 1D array containing only learnable parameter values.
+            structure: LearnableParamsStructure with fixed values for restoration.
+        """
+        from ..prior._noprior import NoPrior
+
+        noprior_params_name = NoPrior.Params.__name__
+
+        def is_fixed_params(x: Any) -> bool:
+            return type(x).__name__ == noprior_params_name
+
+        # Flatten with NoPriorParams treated as opaque leaves
+        leaves, treedef = jax.tree_util.tree_flatten(
+            self.params, is_leaf=is_fixed_params
+        )
+
+        learnable_arrays = []
+        learnable_shapes = []
+        learnable_dtypes = []
+        fixed_indices = []
+        fixed_values = []
+
+        for i, leaf in enumerate(leaves):
+            if is_fixed_params(leaf):
+                fixed_indices.append(i)
+                fixed_values.append(leaf)
+            else:
+                arr = jnp.atleast_1d(jnp.asarray(leaf))
+                learnable_arrays.append(arr.ravel())
+                learnable_shapes.append(arr.shape)
+                learnable_dtypes.append(arr.dtype)
+
+        flat = (
+            jnp.concatenate(learnable_arrays)
+            if learnable_arrays
+            else jnp.array([])
+        )
+
+        structure = LearnableParamsStructure(
+            treedef=treedef,
+            shapes=tuple(learnable_shapes),
+            dtypes=tuple(learnable_dtypes),
+            fixed_indices=tuple(fixed_indices),
+            fixed_values=tuple(fixed_values),
+        )
+
+        return flat, structure
+
+    def unflatten_learnable(
+        self, flat: jnp.ndarray, structure: LearnableParamsStructure
+    ) -> 'Model[P, S, CS, Tr]':
+        """Reconstruct Model with params from learnable-only flat array.
+
+        Fixed values are restored from the structure.
+
+        Args:
+            flat: 1D array of learnable parameter values.
+            structure: LearnableParamsStructure from flatten_learnable.
+
+        Returns:
+            New Model with reconstructed params (learnable + fixed).
+        """
+        # Reconstruct learnable leaves
+        learnable_leaves = []
+        offset = 0
+
+        for shape, dtype in zip(structure.shapes, structure.dtypes):
+            size = structure._prod(shape)
+            leaf_flat = flat[offset : offset + size]
+            leaf = leaf_flat.reshape(shape).astype(dtype)
+
+            if shape == (1,):
+                leaf = leaf[0]
+
+            learnable_leaves.append(leaf)
+            offset += size
+
+        # Merge learnable and fixed leaves in original order
+        n_total = len(learnable_leaves) + len(structure.fixed_indices)
+        all_leaves = [None] * n_total
+
+        # Place fixed values at their original positions
+        for idx, val in zip(structure.fixed_indices, structure.fixed_values):
+            all_leaves[idx] = val
+
+        # Fill remaining positions with learnable values
+        learnable_iter = iter(learnable_leaves)
+        for i in range(n_total):
+            if all_leaves[i] is None:
+                all_leaves[i] = next(learnable_iter)
+
+        params = jax.tree_util.tree_unflatten(structure.treedef, all_leaves)
+        return self.replace_params(params)
+
+    def get_learnable_transforms(self) -> list:
+        """Get flat list of transforms for learnable parameters only.
+
+        Excludes transforms for fixed (NoPrior) parameters, matching the
+        structure returned by flatten_learnable().
+
+        Returns:
+            List of Transform instances for learnable parameters.
+        """
+        from ..prior._noprior import NoPrior
+
+        noprior_params_name = NoPrior.Params.__name__
+
+        def is_fixed_params(x: Any) -> bool:
+            return type(x).__name__ == noprior_params_name
+
+        # Flatten params and transforms with same is_leaf to ensure alignment
+        flat_params, _ = jax.tree_util.tree_flatten(
+            self.params, is_leaf=is_fixed_params
+        )
+        transforms_tree = self.spec.get_transforms()
+        flat_transforms, _ = jax.tree_util.tree_flatten(
+            transforms_tree, is_leaf=is_fixed_params
+        )
+
+        # Return only transforms where the corresponding param is not fixed
+        return [
+            t for t, p in zip(flat_transforms, flat_params)
+            if not is_fixed_params(p)
+        ]
+
     def to_unconstrained(self) -> P:
         """Transform current params to unconstrained space."""
         transforms = self.spec.get_transforms()
@@ -175,71 +306,11 @@ class Model(Generic[P, S, CS, Tr]):
             unconstrained_params, transforms, inverse=False
         )
 
-        prior_lp = self._eval_priors(self.spec, constrained_params)
+        prior_lp = self.spec.eval_priors(constrained_params)
 
         jacobian = self._log_det_jacobian(unconstrained_params, transforms)
 
         return prior_lp + jacobian
-
-    def _eval_priors(self, spec: 'Spec', params: Any) -> Scalar:
-        """Recursively evaluate all priors in the Spec tree.
-
-        Walks the Spec tree and typed params in parallel. When a field
-        is a Prior (which is a Spec), evaluates its log_prob and then
-        recurses into its own fields to evaluate nested priors (hyperpriors).
-
-        Args:
-            spec: Current Spec node in the tree
-            params: Corresponding typed Params dataclass
-
-        Returns:
-            Sum of all log prior probabilities
-        """
-        total = jnp.zeros(())
-
-        for f in fields(params):
-            name = f.name
-            nested_spec = getattr(spec, name, None)
-            nested_params = getattr(params, name, None)
-
-            if nested_params is None:
-                continue
-
-            # Handle list[Spec] - both spec and params are tuples
-            if isinstance(nested_spec, tuple) and isinstance(
-                nested_params, tuple
-            ):
-                for spec_item, params_item in zip(nested_spec, nested_params):
-                    if isinstance(spec_item, Prior):
-                        value = jnp.asarray(params_item.value)
-                        state = spec_item.init_state()
-                        total = total + spec_item.log_prob(
-                            value, params_item, state
-                        )
-                        total = total + self._eval_priors(
-                            spec_item, params_item
-                        )
-                    elif isinstance(spec_item, Spec):
-                        total = total + self._eval_priors(
-                            spec_item, params_item
-                        )
-                continue
-
-            if isinstance(nested_spec, Prior):
-                # This is a Prior - evaluate its log_prob
-                value = jnp.asarray(nested_params.value)
-                state = nested_spec.init_state()
-                total = total + nested_spec.log_prob(
-                    value, nested_params, state
-                )
-                # Recurse into the Prior's fields for nested priors (hyperpriors)
-                total = total + self._eval_priors(nested_spec, nested_params)
-
-            elif isinstance(nested_spec, Spec):
-                # Non-Prior Spec (e.g., Kernel) - just recurse
-                total = total + self._eval_priors(nested_spec, nested_params)
-
-        return total
 
     def _log_det_jacobian(
         self, unconstrained_params: Any, transforms: Any
